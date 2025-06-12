@@ -3,6 +3,7 @@ import os
 from typing import List
 
 import torch
+from compel import Compel
 from diffusers import StableDiffusionPipeline
 from diffusers.pipelines.controlnet import MultiControlNetModel
 from PIL import Image
@@ -228,6 +229,12 @@ class IPAdapterFaceID:
         if not isinstance(negative_prompt, List):
             negative_prompt = [negative_prompt] * num_prompts
 
+        compel_instance = Compel(pipe=self.pipe)
+        expanded_prompts = [p for p_batch in prompt for p in [p_batch] * num_samples]
+        expanded_negative_prompts = [p for p_batch in negative_prompt for p in [p_batch] * num_samples]
+        prompt_embeds_ = compel_instance(expanded_prompts)
+        negative_prompt_embeds_ = compel_instance(expanded_negative_prompts)
+
         image_prompt_embeds, uncond_image_prompt_embeds = self.get_image_embeds(faceid_embeds)
 
         bs_embed, seq_len, _ = image_prompt_embeds.shape
@@ -237,13 +244,7 @@ class IPAdapterFaceID:
         uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
 
         with torch.inference_mode():
-            prompt_embeds_, negative_prompt_embeds_ = self.pipe.encode_prompt(
-                prompt,
-                device=self.device,
-                num_images_per_prompt=num_samples,
-                do_classifier_free_guidance=True,
-                negative_prompt=negative_prompt,
-            )
+            # prompt_embeds_ and negative_prompt_embeds_ are already computed using Compel
             prompt_embeds = torch.cat([prompt_embeds_, image_prompt_embeds], dim=1)
             negative_prompt_embeds = torch.cat([negative_prompt_embeds_, uncond_image_prompt_embeds], dim=1)
 
@@ -377,6 +378,12 @@ class IPAdapterFaceIDPlus:
         if not isinstance(negative_prompt, List):
             negative_prompt = [negative_prompt] * num_prompts
 
+        compel_instance = Compel(pipe=self.pipe)
+        expanded_prompts = [p for p_batch in prompt for p in [p_batch] * num_samples]
+        expanded_negative_prompts = [p for p_batch in negative_prompt for p in [p_batch] * num_samples]
+        prompt_embeds_ = compel_instance(expanded_prompts)
+        negative_prompt_embeds_ = compel_instance(expanded_negative_prompts)
+
         image_prompt_embeds, uncond_image_prompt_embeds = self.get_image_embeds(faceid_embeds, face_image, s_scale, shortcut)
 
         bs_embed, seq_len, _ = image_prompt_embeds.shape
@@ -386,13 +393,7 @@ class IPAdapterFaceIDPlus:
         uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
 
         with torch.inference_mode():
-            prompt_embeds_, negative_prompt_embeds_ = self.pipe.encode_prompt(
-                prompt,
-                device=self.device,
-                num_images_per_prompt=num_samples,
-                do_classifier_free_guidance=True,
-                negative_prompt=negative_prompt,
-            )
+            # prompt_embeds_ and negative_prompt_embeds_ are already computed using Compel
             prompt_embeds = torch.cat([prompt_embeds_, image_prompt_embeds], dim=1)
             negative_prompt_embeds = torch.cat([negative_prompt_embeds_, uncond_image_prompt_embeds], dim=1)
 
@@ -437,6 +438,12 @@ class IPAdapterFaceIDXL(IPAdapterFaceID):
         if not isinstance(negative_prompt, List):
             negative_prompt = [negative_prompt] * num_prompts
 
+        compel_instance = Compel(pipe=self.pipe)
+        expanded_prompts = [p for p_batch in prompt for p in [p_batch] * num_samples]
+        expanded_negative_prompts = [p for p_batch in negative_prompt for p in [p_batch] * num_samples]
+        prompt_embeds, pooled_prompt_embeds = compel_instance(expanded_prompts)
+        negative_prompt_embeds, negative_pooled_prompt_embeds = compel_instance(expanded_negative_prompts)
+
         image_prompt_embeds, uncond_image_prompt_embeds = self.get_image_embeds(faceid_embeds)
 
         bs_embed, seq_len, _ = image_prompt_embeds.shape
@@ -446,17 +453,8 @@ class IPAdapterFaceIDXL(IPAdapterFaceID):
         uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
 
         with torch.inference_mode():
-            (
-                prompt_embeds,
-                negative_prompt_embeds,
-                pooled_prompt_embeds,
-                negative_pooled_prompt_embeds,
-            ) = self.pipe.encode_prompt(
-                prompt,
-                num_images_per_prompt=num_samples,
-                do_classifier_free_guidance=True,
-                negative_prompt=negative_prompt,
-            )
+            # prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
+            # are already computed using Compel
             prompt_embeds = torch.cat([prompt_embeds, image_prompt_embeds], dim=1)
             negative_prompt_embeds = torch.cat([negative_prompt_embeds, uncond_image_prompt_embeds], dim=1)
 
@@ -506,6 +504,12 @@ class IPAdapterFaceIDPlusXL(IPAdapterFaceIDPlus):
         if not isinstance(negative_prompt, List):
             negative_prompt = [negative_prompt] * num_prompts
 
+        compel_instance = Compel(pipe=self.pipe)
+        expanded_prompts = [p for p_batch in prompt for p in [p_batch] * num_samples]
+        expanded_negative_prompts = [p for p_batch in negative_prompt for p in [p_batch] * num_samples]
+        prompt_embeds, pooled_prompt_embeds = compel_instance(expanded_prompts)
+        negative_prompt_embeds, negative_pooled_prompt_embeds = compel_instance(expanded_negative_prompts)
+
         image_prompt_embeds, uncond_image_prompt_embeds = self.get_image_embeds(faceid_embeds, face_image, s_scale, shortcut)
 
         bs_embed, seq_len, _ = image_prompt_embeds.shape
@@ -515,17 +519,8 @@ class IPAdapterFaceIDPlusXL(IPAdapterFaceIDPlus):
         uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
 
         with torch.inference_mode():
-            (
-                prompt_embeds,
-                negative_prompt_embeds,
-                pooled_prompt_embeds,
-                negative_pooled_prompt_embeds,
-            ) = self.pipe.encode_prompt(
-                prompt,
-                num_images_per_prompt=num_samples,
-                do_classifier_free_guidance=True,
-                negative_prompt=negative_prompt,
-            )
+            # prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
+            # are already computed using Compel
             prompt_embeds = torch.cat([prompt_embeds, image_prompt_embeds], dim=1)
             negative_prompt_embeds = torch.cat([negative_prompt_embeds, uncond_image_prompt_embeds], dim=1)
 
