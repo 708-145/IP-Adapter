@@ -8,7 +8,8 @@ readme = "README.md"
 packages = [{ include = "ip_adapter" }]
 
 [tool.poetry.dependencies]
-python = ">=3.6"
+python = ">=3.8"
+compel = "^0.1.10"
 
 [tool.ruff]
 line-length = 119

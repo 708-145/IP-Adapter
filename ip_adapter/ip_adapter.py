@@ -8,7 +8,7 @@ from PIL import Image
 from safetensors import safe_open
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
 
-from .utils import is_torch2_available, get_generator
+from .utils import is_torch2_available, get_generator, get_compel_prompt_embeddings
 
 if is_torch2_available():
     from .attention_processor import (
@@ -165,6 +165,7 @@ class IPAdapter:
         seed=None,
         guidance_scale=7.5,
         num_inference_steps=30,
+        use_compel: bool = False, # New parameter
         **kwargs,
     ):
         self.set_scale(scale)
@@ -184,6 +185,39 @@ class IPAdapter:
         if not isinstance(negative_prompt, List):
             negative_prompt = [negative_prompt] * num_prompts
 
+        with torch.inference_mode():
+            if use_compel:
+                # Use Compel to get text embeddings
+                # Note: get_compel_prompt_embeddings expects lists of prompts
+                prompt_embeds_, negative_prompt_embeds_ = get_compel_prompt_embeddings(
+                    pipe=self.pipe,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    device=self.device
+                )
+                # Assuming get_compel_prompt_embeddings handles its own fallbacks or errors.
+                if prompt_embeds_ is None or negative_prompt_embeds_ is None:
+                     # This condition implies compel utility itself failed and its internal fallback also failed.
+                     # Raising an error or using a very default embedding might be needed.
+                     # For now, let's re-encode with the original method as a last resort.
+                    print("Compel encoding failed critically, attempting direct original encoding.")
+                    prompt_embeds_, negative_prompt_embeds_ = self.pipe.encode_prompt(
+                        prompt,
+                        device=self.device,
+                        num_images_per_prompt=num_samples,
+                        do_classifier_free_guidance=(guidance_scale > 1.0),
+                        negative_prompt=negative_prompt,
+                    )
+            else:
+                # Original Diffusers text encoding
+                prompt_embeds_, negative_prompt_embeds_ = self.pipe.encode_prompt(
+                    prompt,
+                    device=self.device,
+                    num_images_per_prompt=num_samples,
+                    do_classifier_free_guidance=(guidance_scale > 1.0),
+                    negative_prompt=negative_prompt,
+                )
+
         image_prompt_embeds, uncond_image_prompt_embeds = self.get_image_embeds(
             pil_image=pil_image, clip_image_embeds=clip_image_embeds
         )
@@ -193,16 +227,9 @@ class IPAdapter:
         uncond_image_prompt_embeds = uncond_image_prompt_embeds.repeat(1, num_samples, 1)
         uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
 
-        with torch.inference_mode():
-            prompt_embeds_, negative_prompt_embeds_ = self.pipe.encode_prompt(
-                prompt,
-                device=self.device,
-                num_images_per_prompt=num_samples,
-                do_classifier_free_guidance=True,
-                negative_prompt=negative_prompt,
-            )
-            prompt_embeds = torch.cat([prompt_embeds_, image_prompt_embeds], dim=1)
-            negative_prompt_embeds = torch.cat([negative_prompt_embeds_, uncond_image_prompt_embeds], dim=1)
+        # Concatenate text and image embeddings
+        prompt_embeds = torch.cat([prompt_embeds_, image_prompt_embeds], dim=1)
+        negative_prompt_embeds = torch.cat([negative_prompt_embeds_, uncond_image_prompt_embeds], dim=1)
 
         generator = get_generator(seed, self.device)
 
@@ -230,6 +257,7 @@ class IPAdapterXL(IPAdapter):
         num_samples=4,
         seed=None,
         num_inference_steps=30,
+        use_compel: bool = False,
         **kwargs,
     ):
         self.set_scale(scale)
@@ -253,30 +281,88 @@ class IPAdapterXL(IPAdapter):
         uncond_image_prompt_embeds = uncond_image_prompt_embeds.repeat(1, num_samples, 1)
         uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
 
-        with torch.inference_mode():
-            (
-                prompt_embeds,
-                negative_prompt_embeds,
-                pooled_prompt_embeds,
-                negative_pooled_prompt_embeds,
-            ) = self.pipe.encode_prompt(
-                prompt,
-                num_images_per_prompt=num_samples,
-                do_classifier_free_guidance=True,
-                negative_prompt=negative_prompt,
-            )
-            prompt_embeds = torch.cat([prompt_embeds, image_prompt_embeds], dim=1)
-            negative_prompt_embeds = torch.cat([negative_prompt_embeds, uncond_image_prompt_embeds], dim=1)
+        # Determine guidance scale for encoding
+        # guidance_scale is a parameter of this generate method
+        do_cfg = guidance_scale > 1.0
 
-        self.generator = get_generator(seed, self.device)
+        with torch.inference_mode():
+            if use_compel:
+                # Assuming get_compel_prompt_embeddings returns a dict for SDXL
+                # and handles device internally or via self.device from pipe.
+                compel_output = get_compel_prompt_embeddings(
+                    pipe=self.pipe,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    device=self.device # Explicitly passing device
+                )
+                # If compel_output is None (critical failure in util), fallback
+                if compel_output is None:
+                    print("Compel utility failed critically. Falling back to standard encoding for SDXL.")
+                    (
+                        prompt_embeds_text,
+                        negative_prompt_embeds_text,
+                        pooled_prompt_embeds_text,
+                        negative_pooled_prompt_embeds_text,
+                    ) = self.pipe.encode_prompt(
+                        prompt=prompt,
+                        num_images_per_prompt=num_samples,
+                        do_classifier_free_guidance=do_cfg,
+                        negative_prompt=negative_prompt,
+                        device=self.device,
+                    )
+                else:
+                    prompt_embeds_text = compel_output.get("prompt_embeds")
+                    negative_prompt_embeds_text = compel_output.get("negative_prompt_embeds")
+                    pooled_prompt_embeds_text = compel_output.get("pooled_prompt_embeds")
+                    negative_pooled_prompt_embeds_text = compel_output.get("negative_pooled_prompt_embeds")
+
+                    if prompt_embeds_text is None or negative_prompt_embeds_text is None or \
+                       pooled_prompt_embeds_text is None or negative_pooled_prompt_embeds_text is None:
+                        # This case implies Compel was found, but did not return all expected embeddings for SDXL.
+                        # This might happen if the Compel direct path was taken and it doesn't produce pooled embeds.
+                        # The utility function should ideally handle this by using its internal fallback for SDXL.
+                        # If we reach here, it means the utility's promise of providing SDXL compatible output wasn't fully met.
+                        print("Compel output incomplete for SDXL. Falling back to standard encoding.")
+                        (
+                            prompt_embeds_text,
+                            negative_prompt_embeds_text,
+                            pooled_prompt_embeds_text,
+                            negative_pooled_prompt_embeds_text,
+                        ) = self.pipe.encode_prompt(
+                            prompt=prompt,
+                            num_images_per_prompt=num_samples,
+                            do_classifier_free_guidance=do_cfg,
+                            negative_prompt=negative_prompt,
+                            device=self.device,
+                        )
+            else:
+                (
+                    prompt_embeds_text,
+                    negative_prompt_embeds_text,
+                    pooled_prompt_embeds_text,
+                    negative_pooled_prompt_embeds_text,
+                ) = self.pipe.encode_prompt(
+                    prompt=prompt, # Already a list
+                    num_images_per_prompt=num_samples,
+                    do_classifier_free_guidance=do_cfg, # Use determined do_cfg
+                    negative_prompt=negative_prompt, # Already a list
+                    device=self.device, # Add device for clarity, though pipe.encode_prompt might get it from pipe
+                )
+
+            prompt_embeds = torch.cat([prompt_embeds_text, image_prompt_embeds], dim=1)
+            negative_prompt_embeds = torch.cat([negative_prompt_embeds_text, uncond_image_prompt_embeds], dim=1)
+
+        # generator is created outside with torch.inference_mode() in the original code
+        # but it's fine here as well.
+        generator = get_generator(seed, self.device)
         
         images = self.pipe(
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
-            pooled_prompt_embeds=pooled_prompt_embeds,
-            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds_text,
+            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds_text,
             num_inference_steps=num_inference_steps,
-            generator=self.generator,
+            generator=generator, # Corrected from self.generator to generator
             **kwargs,
         ).images
 
@@ -364,6 +450,7 @@ class IPAdapterPlusXL(IPAdapter):
         num_samples=4,
         seed=None,
         num_inference_steps=30,
+        use_compel: bool = False,
         **kwargs,
     ):
         self.set_scale(scale)
@@ -387,28 +474,76 @@ class IPAdapterPlusXL(IPAdapter):
         uncond_image_prompt_embeds = uncond_image_prompt_embeds.repeat(1, num_samples, 1)
         uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
 
+        # Determine guidance scale for encoding
+        do_cfg = guidance_scale > 1.0
+
         with torch.inference_mode():
-            (
-                prompt_embeds,
-                negative_prompt_embeds,
-                pooled_prompt_embeds,
-                negative_pooled_prompt_embeds,
-            ) = self.pipe.encode_prompt(
-                prompt,
-                num_images_per_prompt=num_samples,
-                do_classifier_free_guidance=True,
-                negative_prompt=negative_prompt,
-            )
-            prompt_embeds = torch.cat([prompt_embeds, image_prompt_embeds], dim=1)
-            negative_prompt_embeds = torch.cat([negative_prompt_embeds, uncond_image_prompt_embeds], dim=1)
+            if use_compel:
+                compel_output = get_compel_prompt_embeddings(
+                    pipe=self.pipe,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    device=self.device
+                )
+                if compel_output is None:
+                    print("Compel utility failed critically. Falling back to standard encoding for SDXL (Plus).")
+                    (
+                        prompt_embeds_text,
+                        negative_prompt_embeds_text,
+                        pooled_prompt_embeds_text,
+                        negative_pooled_prompt_embeds_text,
+                    ) = self.pipe.encode_prompt(
+                        prompt=prompt,
+                        num_images_per_prompt=num_samples,
+                        do_classifier_free_guidance=do_cfg,
+                        negative_prompt=negative_prompt,
+                        device=self.device,
+                    )
+                else:
+                    prompt_embeds_text = compel_output.get("prompt_embeds")
+                    negative_prompt_embeds_text = compel_output.get("negative_prompt_embeds")
+                    pooled_prompt_embeds_text = compel_output.get("pooled_prompt_embeds")
+                    negative_pooled_prompt_embeds_text = compel_output.get("negative_pooled_prompt_embeds")
+
+                    if prompt_embeds_text is None or negative_prompt_embeds_text is None or \
+                       pooled_prompt_embeds_text is None or negative_pooled_prompt_embeds_text is None:
+                        print("Compel output incomplete for SDXL (Plus). Falling back to standard encoding.")
+                        (
+                            prompt_embeds_text,
+                            negative_prompt_embeds_text,
+                            pooled_prompt_embeds_text,
+                            negative_pooled_prompt_embeds_text,
+                        ) = self.pipe.encode_prompt(
+                            prompt=prompt,
+                            num_images_per_prompt=num_samples,
+                            do_classifier_free_guidance=do_cfg,
+                            negative_prompt=negative_prompt,
+                            device=self.device,
+                        )
+            else:
+                (
+                    prompt_embeds_text,
+                    negative_prompt_embeds_text,
+                    pooled_prompt_embeds_text,
+                    negative_pooled_prompt_embeds_text,
+                ) = self.pipe.encode_prompt(
+                    prompt=prompt,
+                    num_images_per_prompt=num_samples,
+                    do_classifier_free_guidance=do_cfg,
+                    negative_prompt=negative_prompt,
+                    device=self.device,
+                )
+
+            prompt_embeds = torch.cat([prompt_embeds_text, image_prompt_embeds], dim=1)
+            negative_prompt_embeds = torch.cat([negative_prompt_embeds_text, uncond_image_prompt_embeds], dim=1)
 
         generator = get_generator(seed, self.device)
 
         images = self.pipe(
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
-            pooled_prompt_embeds=pooled_prompt_embeds,
-            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds_text,
+            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds_text,
             num_inference_steps=num_inference_steps,
             generator=generator,
             **kwargs,
