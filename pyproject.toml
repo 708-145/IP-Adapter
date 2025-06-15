@@ -9,7 +9,7 @@ packages = [{ include = "ip_adapter" }]
 
 [tool.poetry.dependencies]
 python = ">=3.8"
-compel = "^0.1.10"
+compel = "0.1.8"
 
 [tool.ruff]
 line-length = 119

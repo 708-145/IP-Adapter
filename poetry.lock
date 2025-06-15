@@ -129,14 +129,14 @@ files = [
 
 [[package]]
 name = "compel"
-version = "0.1.10"
+version = "0.1.8"
 description = "A prompting enhancement library for transformers-type text embedding systems."
 optional = false
 python-versions = ">=3.7"
 groups = ["main"]
 files = [
-    {file = "compel-0.1.10-py3-none-any.whl", hash = "sha256:d604062f6ecd3abac72e3e187738dde14e21cc8b55e3916deecd214447f98f03"},
-    {file = "compel-0.1.10.tar.gz", hash = "sha256:a53bb592a0b910e3743a78881c4abba0204bf6851eb9fcb5b1d53360f41ac507"},
+    {file = "compel-0.1.8-py3-none-any.whl", hash = "sha256:46c2270e9be3be84abba50e9028b902210a8082e9ece73551c8ddd368f419af2"},
+    {file = "compel-0.1.8.tar.gz", hash = "sha256:9769dbca4cd56317ef52594fa2a63f6dc9d7df9a04edb4a63fc02f522a9bb5b9"},
 ]
 
 [package.dependencies]
@@ -2272,4 +2272,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.8"
-content-hash = "4e09ded1af1b194f3ecf72836bc8a9756cc81e34924aec4ced4514d1ea8a52bf"
+content-hash = "cbe915a3c958b84841952bab09aea5fa96cc81c1d9378aee7a1c33c021ac73a7"
