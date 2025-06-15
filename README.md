@@ -105,6 +105,34 @@ As the image is center cropped in the default image processor of CLIP, IP-Adapte
 
 ![](assets/demo/crop_and_resize_cmp.jpg)
 
+### Advanced Prompting with Compel
+IP-Adapter now supports advanced prompt syntax and weighting through the [Compel](https://github.com/damianbarabonkov/compel) library. This allows for more nuanced control over text prompts, such as emphasizing or de-emphasizing words (e.g., `(word)++`, `(word:1.2)`), or using conjunctions (e.g., `word1 AND word2`) for separate concept processing. To use this feature, pass `use_compel=True` to the `generate()` method of the IPAdapter instance.
+
+For example, you can use syntax like:
+- `"a cat running on (grass)++"` (to increase the weight of "grass")
+- `"a cat running on (grass)-"` (to decrease the weight of "grass")
+- `"a (red:1.2) cat on a (blue:1.1) mat"` (for specific weights)
+- `"a cat AND a dog"` (for Compel's conjunction feature)
+
+For the full range of supported syntax and features, please refer to the official [Compel documentation](https://github.com/damianbarabonkov/compel).
+
+Here's a quick example of how to use it:
+```python
+# Assume ip_adapter and pil_image are already loaded
+# from ip_adapter import IPAdapter
+# ip_adapter = IPAdapter(...)
+# pil_image = Image.open("your_image.png")
+
+images = ip_adapter.generate(
+    pil_image=pil_image,
+    prompt="A (magical forest:1.3) with ((glowing mushrooms))++ AND a hidden (waterfall:0.8)",
+    negative_prompt="ugly, blurry, (low quality)-",
+    use_compel=True,
+    seed=42
+)
+# images[0].save("compel_example.png")
+```
+
 ### SDXL_1.0
 
 - [**ip_adapter_sdxl_demo**](ip_adapter_sdxl_demo.ipynb): image variations with image prompt.

@@ -91,3 +91,70 @@ def get_generator(seed, device):
         generator = None
 
     return generator
+
+
+def get_compel_prompt_embeddings(pipe, prompt, negative_prompt, device):
+    """
+    Encodes prompts using Compel to obtain embeddings.
+
+    Args:
+        pipe: The diffusion pipeline (must have .tokenizer, .text_encoder, and .compel).
+        prompt (str or list[str]): The prompt or a list of prompts to encode.
+        negative_prompt (str or list[str]): The negative prompt or a list of negative prompts to encode.
+        device (str or torch.device): The device to move tensors to.
+
+    Returns:
+        tuple: A tuple containing (prompt_embeds, negative_prompt_embeds).
+               Returns (None, None) if Compel is not available or an error occurs.
+    """
+    if not hasattr(pipe, 'compel'):
+        print("Pipeline does not have Compel. Skipping Compel-based prompt encoding.")
+        return None, None
+
+    try:
+        # Ensure prompts are lists for Compel
+        if isinstance(prompt, str):
+            prompt = [prompt]
+        if isinstance(negative_prompt, str):
+            negative_prompt = [negative_prompt]
+
+        prompt_embeds = pipe.compel.build_conditioning_tensor(prompt).to(device)
+        negative_prompt_embeds = pipe.compel.build_conditioning_tensor(negative_prompt).to(device)
+
+        # Pad conditioning tensors if necessary (Compel specific for long prompts)
+        if hasattr(pipe.compel, 'pad_conditioning_tensors_to_same_length'):
+            prompt_embeds, negative_prompt_embeds = pipe.compel.pad_conditioning_tensors_to_same_length(
+                [prompt_embeds, negative_prompt_embeds]
+            )
+
+        return prompt_embeds, negative_prompt_embeds
+    except Exception as e:
+        print(f"Error during Compel prompt encoding: {e}")
+        # Fallback to pipeline's default encoder if Compel fails
+        try:
+            print("Falling back to default pipeline encoder.")
+            prompt_embeds = pipe._encode_prompt(
+                prompt,
+                device=device,
+                num_images_per_prompt=1, # Assuming 1 image per prompt for default
+                do_classifier_free_guidance=True, # Assuming CFG for default
+                negative_prompt=None # Handled separately by default encoder
+            )
+            negative_prompt_embeds = pipe._encode_prompt(
+                negative_prompt,
+                device=device,
+                num_images_per_prompt=1,
+                do_classifier_free_guidance=True,
+                negative_prompt=None
+            )
+            # The default _encode_prompt might return a tuple if text_encoder_2 exists (e.g. SDXL)
+            # We are interested in the first element (prompt_embeds)
+            if isinstance(prompt_embeds, tuple):
+                prompt_embeds = prompt_embeds[0]
+            if isinstance(negative_prompt_embeds, tuple):
+                negative_prompt_embeds = negative_prompt_embeds[0]
+
+            return prompt_embeds, negative_prompt_embeds
+        except Exception as fallback_e:
+            print(f"Error during fallback prompt encoding: {fallback_e}")
+            return None, None
